@@ -17,18 +17,23 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ── ENV ────────────────────────────────────────────────────────────────────────
 const TOKEN = process.env.CLICKUP_TOKEN || '';
 const TEAM_ID = process.env.CLICKUP_TEAM_ID || '';
 const PORT = process.env.PORT || 5173;
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '30000', 10);
-const MANUAL_REFRESH_MAX_PER_HOUR = parseInt(process.env.MANUAL_REFRESH_MAX_PER_HOUR || '20', 10);
+const MANUAL_REFRESH_MAX_PER_HOUR = parseInt(
+  process.env.MANUAL_REFRESH_MAX_PER_HOUR || '20',
+  10
+);
 
+// ── ClickUp client ────────────────────────────────────────────────────────────
 const CU = axios.create({
   baseURL: 'https://api.clickup.com/api/v2',
   headers: { Authorization: TOKEN }
 });
 
-// Cache
+// ── Cache ─────────────────────────────────────────────────────────────────────
 let cache = {
   lastUpdated: 0,
   members: [],
@@ -36,8 +41,8 @@ let cache = {
   workingByUserId: {}
 };
 
-// Handmatige refresh-rate limiting
-let manualCalls = []; // timestamps (ms)
+// ── Handmatige refresh rate-limit ─────────────────────────────────────────────
+let manualCalls = []; // unix ms timestamps
 function pruneManualCalls() {
   const hourAgo = Date.now() - 60 * 60 * 1000;
   manualCalls = manualCalls.filter(t => t >= hourAgo);
@@ -53,15 +58,27 @@ function manualResetInMs() {
   return Math.max(0, (oldest + 60 * 60 * 1000) - Date.now());
 }
 
+// ── Data fetchers ─────────────────────────────────────────────────────────────
 async function fetchMembers() {
+  // Ondersteunt beide vormen van ClickUp responses:
+  // A) GET /team/{id} -> { id, name, members: [...] }
+  // B) GET /team      -> { teams: [ { members: [...] } ] }
   const { data } = await CU.get(`/team/${TEAM_ID}`);
-  const team = data?.teams?.[0];
-  return (team?.members || []).map(m => ({
-    id: String(m.user?.id ?? m.id),
-    name: m.user?.username || m.user?.email || m.user?.id || 'Unknown',
-    email: m.user?.email || null,
-    avatar: m.user?.profilePicture || null
-  }));
+
+  const membersArray =
+    (Array.isArray(data?.members) && data.members) ||
+    (Array.isArray(data?.teams) && data.teams[0]?.members) ||
+    [];
+
+  return membersArray.map(m => {
+    const u = m.user || m; // soms zit 'user' eromheen
+    return {
+      id: String(u?.id),
+      name: u?.username || u?.email || String(u?.id || 'Unknown'),
+      email: u?.email || null,
+      avatar: u?.profilePicture || null
+    };
+  });
 }
 
 async function fetchRunningTimers() {
@@ -96,10 +113,7 @@ async function refreshCache() {
     return;
   }
 
-  const [members, running] = await Promise.all([
-    fetchMembers(),
-    fetchRunningTimers()
-  ]);
+  const [members, running] = await Promise.all([fetchMembers(), fetchRunningTimers()]);
 
   const workingUserIds = new Set(running.map(r => r.userId));
   const workingByUserId = {};
@@ -108,7 +122,7 @@ async function refreshCache() {
   cache = { lastUpdated: Date.now(), members, workingUserIds, workingByUserId };
 }
 
-// Backoff-vriendelijke scheduler i.p.v. vaste setInterval
+// ── Backoff-friendly scheduler (ipv vaste setInterval) ────────────────────────
 let pollDelay = POLL_INTERVAL_MS;
 async function scheduledRefresh() {
   try {
@@ -127,7 +141,7 @@ async function scheduledRefresh() {
 await refreshCache().catch(() => {});
 scheduledRefresh();
 
-// API endpoints
+// ── API ───────────────────────────────────────────────────────────────────────
 app.get('/api/status', (_req, res) => {
   res.json({
     lastUpdated: cache.lastUpdated,
@@ -168,11 +182,12 @@ app.post('/api/refresh', async (_req, res) => {
   }
 });
 
-// Frontend
+// Frontend fallback
 app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// ── Start ─────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`⚡ ClickUp Live Dashboard on http://localhost:${PORT}`);
   if (!TOKEN || !TEAM_ID) console.log('ℹ️ Running in MOCK mode (no CLICKUP_TOKEN/TEAM_ID).');
