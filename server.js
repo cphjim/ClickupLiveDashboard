@@ -226,6 +226,19 @@ app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// TEMP: raw ClickUp response om te zien wat we krijgen
+app.get('/api/debug-team', async (_req, res) => {
+  try {
+    const r = await CU.get(`/team/${TEAM_ID}`);
+    res.status(r.status).json(r.data);
+  } catch (err) {
+    res.status(err?.response?.status || 500).json({
+      error: err?.message,
+      data: err?.response?.data
+    });
+  }
+});
+
 // Start
 app.listen(PORT, () => {
   console.log(`⚡ ClickUp Live Dashboard on http://localhost:${PORT}`);
