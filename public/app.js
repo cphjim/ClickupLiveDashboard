@@ -2,16 +2,21 @@ const intervalSeconds = (Number(new URLSearchParams(location.search).get('interv
 const intervalEl = document.getElementById('interval');
 if (intervalEl) intervalEl.textContent = String(intervalSeconds);
 
-const board = document.getElementById('board');
 const meta = document.getElementById('meta');
 const refreshBtn = document.getElementById('refreshBtn');
 const quotaEl = document.getElementById('quota');
+
+const boardWorking = document.getElementById('board-working');
+const boardIdle = document.getElementById('board-idle');
+const countWorking = document.getElementById('count-working');
+const countIdle = document.getElementById('count-idle');
 
 function initials(name = '') {
   const parts = name.split(/\s+/).filter(Boolean);
   return (parts[0]?.[0] || '?') + (parts[1]?.[0] || '');
 }
 function msToAgo(ms) {
+  if (!ms) return '';
   const s = Math.floor((Date.now() - ms) / 1000);
   if (s < 60) return `${s}s ago`;
   const m = Math.floor(s / 60);
@@ -33,6 +38,68 @@ async function fetchStatus() {
   return res.json();
 }
 
+function makeCard(member, isWorking, info) {
+  const card = document.createElement('div');
+  card.className = 'card';
+
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar';
+  avatar.textContent = member.avatar ? '' : initials(member.name || '');
+  if (member.avatar) {
+    const img = document.createElement('img');
+    img.src = member.avatar;
+    img.alt = member.name || '';
+    img.width = 40;
+    img.height = 40;
+    img.style.borderRadius = '50%';
+    avatar.appendChild(img);
+  }
+
+  const body = document.createElement('div');
+
+  const name = document.createElement('div');
+  name.className = 'name';
+  name.textContent = member.name || '(unknown)';
+
+  const st = document.createElement('div');
+  st.className = 'status';
+  const badge = document.createElement('span');
+  badge.className = `badge ${isWorking ? 'working' : 'idle'}`;
+  badge.textContent = isWorking ? 'Working' : 'Not working';
+  st.appendChild(badge);
+
+  body.appendChild(name);
+  body.appendChild(st);
+
+  if (isWorking && info) {
+    const task = document.createElement('div');
+    task.className = 'task';
+
+    if (info.taskId) {
+      const a = document.createElement('a');
+      a.href = `https://app.clickup.com/t/${info.taskId}`;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = info.taskName || 'Working…';
+      task.appendChild(document.createTextNode('• '));
+      task.appendChild(a);
+    } else {
+      task.textContent = `• ${info.taskName || 'Working…'}`;
+    }
+
+    const time = document.createElement('div');
+    time.className = 'time';
+    time.textContent = info.start ? `Started ${msToAgo(Number(info.start))}` : 'Started …';
+
+    body.appendChild(task);
+    body.appendChild(time);
+  }
+
+  card.appendChild(avatar);
+  card.appendChild(body);
+  return card;
+}
+
 function render({ members = [], workingUserIds = [], workingByUserId = {}, lastUpdated = Date.now(), manual }) {
   if (meta) {
     meta.textContent = `Last updated ${msToAgo(lastUpdated)} • Users: ${members.length}`;
@@ -42,63 +109,36 @@ function render({ members = [], workingUserIds = [], workingByUserId = {}, lastU
     if (refreshBtn) refreshBtn.disabled = manual.remaining <= 0;
   }
 
-  const working = new Set(workingUserIds);
-  if (board) board.innerHTML = '';
+  const workingSet = new Set(workingUserIds);
 
-  const sorted = [...members].sort((a, b) => {
-    const aw = working.has(a.id) ? 0 : 1;
-    const bw = working.has(b.id) ? 0 : 1;
-    return aw - bw || (a.name || '').localeCompare(b.name || '');
-  });
+  // Clear containers
+  boardWorking.innerHTML = '';
+  boardIdle.innerHTML = '';
 
-  for (const m of sorted) {
-    const isWorking = working.has(m.id);
+  // Split members into groups
+  const working = [];
+  const idle = [];
+
+  for (const m of members) {
+    if (workingSet.has(m.id)) working.push(m);
+    else idle.push(m);
+  }
+
+  // sort by name within each group
+  working.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  idle.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  // counts
+  countWorking.textContent = working.length ? `(${working.length})` : '(0)';
+  countIdle.textContent = idle.length ? `(${idle.length})` : '(0)';
+
+  // render
+  for (const m of working) {
     const info = workingByUserId[m.id];
-
-    const card = document.createElement('div');
-    card.className = 'card';
-
-    const avatar = document.createElement('div');
-    avatar.className = 'avatar';
-    avatar.textContent = m.avatar ? '' : initials(m.name || '');
-    if (m.avatar) {
-      const img = document.createElement('img');
-      img.src = m.avatar; img.alt = m.name || ''; img.width = 40; img.height = 40; img.style.borderRadius = '50%';
-      avatar.appendChild(img);
-    }
-
-    const body = document.createElement('div');
-
-    const name = document.createElement('div');
-    name.className = 'name';
-    name.textContent = m.name || '(unknown)';
-
-    const st = document.createElement('div');
-    st.className = 'status';
-    const badge = document.createElement('span');
-    badge.className = `badge ${isWorking ? 'working' : 'idle'}`;
-    badge.textContent = isWorking ? 'Working' : 'Not working';
-    st.appendChild(badge);
-
-    body.appendChild(name);
-    body.appendChild(st);
-
-    if (isWorking && info) {
-      const task = document.createElement('div');
-      task.className = 'task';
-      task.textContent = `• ${info.taskName}`;
-
-      const time = document.createElement('div');
-      time.className = 'time';
-      time.textContent = `Started ${msToAgo(Number(info.start))}`;
-
-      body.appendChild(task);
-      body.appendChild(time);
-    }
-
-    card.appendChild(avatar);
-    card.appendChild(body);
-    if (board) board.appendChild(card);
+    boardWorking.appendChild(makeCard(m, true, info));
+  }
+  for (const m of idle) {
+    boardIdle.appendChild(makeCard(m, false, null));
   }
 }
 
@@ -133,7 +173,7 @@ async function manualRefresh() {
 
 if (refreshBtn) refreshBtn.addEventListener('click', manualRefresh);
 
-// Start zonder top-level await:
+// Start
 (function init() {
   tick();
   setInterval(tick, intervalSeconds * 1000);
