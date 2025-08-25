@@ -35,7 +35,7 @@ let cache = {
   lastUpdated: 0,
   members: [],
   workingUserIds: new Set(),
-  workingByUserId: {} // { userId: { userId, taskId, taskName, start } }
+  workingByUserId: {} // { userId: { userId, taskId, taskName, taskUrl, start } }
 };
 
 // ── Wie ben ik? (user id van het token) ───────────────────────────────────────
@@ -122,6 +122,12 @@ async function fetchActiveForUser(userId) {
   const actives = entries.filter(isActiveEntry);
   let active = actives.sort((a, b) => entryStart(a) - entryStart(b)).pop() || null;
 
+  // als 'active' uit de lijst géén start heeft, haal details van die entry op
+  if (active && !entryStart(active)) {
+    const detailed = await fetchEntryDetails(active?.id || active?.timer_id);
+    if (detailed && entryStart(detailed)) active = detailed;
+  }
+
   // b) fallback: voor MIJN user ook /current proberen; daarna details ophalen
   if (!active && MY_USER_ID && String(userId) === String(MY_USER_ID)) {
     try {
@@ -146,10 +152,15 @@ async function fetchActiveForUser(userId) {
 
   const taskId = active?.task?.id || active?.task_id || null;
 
-  // Geen “nu” fallback (anders zie je 0s-reset). Liever leeg; vullen we zo met oude cache indien aanwezig.
+  const taskUrl =
+    active?.task?.url ||
+    active?.task_url ||
+    (taskId ? `https://app.clickup.com/t/${taskId}` : null);
+
+  // Geen “nu”-fallback: als start ontbreekt, laten we null; refreshCache bewaart dan vorige start
   let start = entryStart(active) || null;
 
-  return { userId: String(userId), taskId, taskName, start };
+  return { userId: String(userId), taskId, taskName, taskUrl, start };
 }
 
 // Voor alle leden (beperkte paralleliteit)
