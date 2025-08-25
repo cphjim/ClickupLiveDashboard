@@ -95,30 +95,46 @@ function isActiveEntry(e) {
   return dur == null || (typeof dur === 'number' && dur < 0) || endA == null || endB == null;
 }
 
-// Eén user checken
+// 1) haal extra details op voor één entry (betrouwbare start + task)
+async function fetchEntryDetails(timerId) {
+  if (!timerId) return null;
+  try {
+    const { data } = await CU.get(`/team/${TEAM_ID}/time_entries/${timerId}?include_task=true`);
+    return data; // bevat o.a. start/start_time en task.{id,name}
+  } catch (e) {
+    console.warn('fetchEntryDetails failed', timerId, e?.response?.status || e?.message);
+    return null;
+  }
+}
+
+// 2) vervang je bestaande fetchActiveForUser() door deze versie
 async function fetchActiveForUser(userId) {
   const now = Date.now();
-  // Ruime window zodat huidige sessie er zéker in valt
-  const windowStart = now - 7 * 24 * 60 * 60 * 1000; // 7 dagen
-  const url = `/team/${TEAM_ID}/time_entries?assignee=${userId}&start_date=${windowStart}&end_date=${now}&include_task=true`;
-  const { data } = await CU.get(url);
-  const entries = data?.data || data?.time_entries || [];
+  // ruim venster zodat de lopende sessie er zeker in valt
+  const windowStart = now - 7 * 24 * 60 * 60 * 1000;
 
-  // 1) Zoek actieve in de algemene lijst
-  let active = entries.find(isActiveEntry);
+  // a) algemene lijst (werkt voor ALLE users wanneer ClickUp goed filtert op user)
+  const listUrl = `/team/${TEAM_ID}/time_entries?assignee=${userId}&start_date=${windowStart}&end_date=${now}&include_task=true`;
+  const listResp = await CU.get(listUrl);
+  const entries = listResp?.data?.data || listResp?.data?.time_entries || [];
 
-  // 2) Speciaal: als dit MIJN user is, probeer ook het 'current' endpoint
+  const isActive = (e) =>
+    e?.duration == null || (typeof e?.duration === 'number' && e.duration < 0) ||
+    e?.end == null || e?.end_time == null;
+
+  let active = entries.find(isActive);
+
+  // b) fallback: voor MIJN user ook /current proberen (sommige tenants vullen de lijst niet netjes)
   if (!active && MY_USER_ID && String(userId) === String(MY_USER_ID)) {
     try {
-      const r = await CU.get(`/team/${TEAM_ID}/time_entries/current`);
-      const cur = r?.data;
-      // Vorm varieert; accepteer objecten die duidelijk "running" zijn
-      const maybe = Array.isArray(cur) ? cur.find(isActiveEntry) : cur;
-      if (maybe && (isActiveEntry(maybe) || maybe?.start || maybe?.start_time)) {
-        active = maybe;
+      const cur = (await CU.get(`/team/${TEAM_ID}/time_entries/current`))?.data;
+      const curEntry = Array.isArray(cur) ? cur.find(isActive) : cur;
+      if (curEntry && isActive(curEntry)) {
+        // extra detail opvragen (betere start + task)
+        const detailed = await fetchEntryDetails(curEntry?.id || curEntry?.timer_id);
+        active = detailed || curEntry;
       }
     } catch (e) {
-      // niet fataal
       console.warn('current endpoint failed', e?.response?.status || e?.message);
     }
   }
@@ -132,7 +148,10 @@ async function fetchActiveForUser(userId) {
     'Working…';
 
   const taskId = active?.task?.id || active?.task_id || null;
-  const start = Number(active?.start ?? active?.start_time ?? Date.now());
+
+  // Gebruik echte start als aanwezig; anders val terug op evt. oud veld; nooit op "nu" als /current iets gaf
+  const start =
+    Number(active?.start ?? active?.start_time ?? entries.find(isActive)?.start ?? Date.now());
 
   return { userId: String(userId), taskId, taskName, start };
 }
