@@ -63,7 +63,13 @@ function manualResetInMs() {
 //  B) GET /team -> { teams: [ { members: [...] } ] }
 async function fetchMembers() {
   const { data } = await CU.get(`/team/${TEAM_ID}`);
+
+  // Ondersteun alle varianten die ClickUp kan teruggeven:
+  // A) { team: { members: [...] } }
+  // B) { members: [...] }
+  // C) { teams: [ { members: [...] } ] }
   const membersArray =
+    (Array.isArray(data?.team?.members) && data.team.members) ||
     (Array.isArray(data?.members) && data.members) ||
     (Array.isArray(data?.teams) && data.teams[0]?.members) ||
     [];
@@ -74,7 +80,7 @@ async function fetchMembers() {
       id: String(u?.id),
       name: u?.username || u?.email || String(u?.id || 'Unknown'),
       email: u?.email || null,
-      avatar: u?.profilePicture || null
+      avatar: u?.profilePicture || null,
     };
   });
 }
