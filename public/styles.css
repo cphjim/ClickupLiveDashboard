@@ -12,11 +12,17 @@ body {
   margin: 0; background: var(--bg); color: var(--text);
   font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, "Helvetica Neue", Arial;
 }
-header { display: flex; align-items: baseline; justify-content: space-between; padding: 16px 24px; border-bottom: 1px solid #1b2247; }
-header h1 { margin: 0; font-size: 20px; }
-#meta { color: var(--muted); font-size: 12px; }
+header {
+  display: flex; align-items: center; gap: 10px;
+  justify-content: flex-start; padding: 16px 24px; border-bottom: 1px solid #1b2247;
+}
+header h1 { margin: 0; font-size: 20px; margin-right: 12px; }
+#meta { color: var(--muted); font-size: 12px; margin-right: auto; }
 
-.board { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; padding: 16px; }
+.board {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px; padding: 16px;
+}
 .card { background: var(--card); border: 1px solid #1b2247; border-radius: 14px; padding: 14px; display: flex; gap: 12px; align-items: center; }
 .avatar { width: 40px; height: 40px; border-radius: 50%; background: #0e1330; display: grid; place-items: center; font-weight: 700; color: var(--muted); }
 .name { font-weight: 600; }
@@ -26,3 +32,10 @@ header h1 { margin: 0; font-size: 20px; }
 .badge.idle { background: rgba(239, 87, 83, 0.12); color: var(--red); border: 1px solid rgba(239, 87, 83, 0.4); }
 .task { color: var(--amber); font-size: 12px; margin-top: 6px; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .time { color: var(--muted); font-size: 12px; }
+
+button.refresh {
+  background: transparent; border: 1px solid #3b47a1; color: #e7ecff;
+  padding: 6px 10px; border-radius: 10px; cursor: pointer;
+}
+button.refresh:disabled { opacity: 0.5; cursor: not-allowed; }
+.quota { margin-left: 4px; color: var(--muted); }
