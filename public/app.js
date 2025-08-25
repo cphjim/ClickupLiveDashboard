@@ -50,3 +50,90 @@ function render({ members, workingUserIds, workingByUserId, lastUpdated, manual 
     const bw = working.has(b.id) ? 0 : 1;
     return aw - bw || a.name.localeCompare(b.name);
   });
+
+  for (const m of sorted) {
+    const isWorking = working.has(m.id);
+    const info = workingByUserId[m.id];
+
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar';
+    avatar.textContent = m.avatar ? '' : initials(m.name);
+    if (m.avatar) {
+      const img = document.createElement('img');
+      img.src = m.avatar; img.alt = m.name; img.width = 40; img.height = 40; img.style.borderRadius = '50%';
+      avatar.appendChild(img);
+    }
+
+    const body = document.createElement('div');
+
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = m.name;
+
+    const st = document.createElement('div');
+    st.className = 'status';
+    const badge = document.createElement('span');
+    badge.className = `badge ${isWorking ? 'working' : 'idle'}`;
+    badge.textContent = isWorking ? 'Working' : 'Not working';
+    st.appendChild(badge);
+
+    body.appendChild(name);
+    body.appendChild(st);
+
+    if (isWorking && info) {
+      const task = document.createElement('div');
+      task.className = 'task';
+      task.textContent = `• ${info.taskName}`;
+
+      const time = document.createElement('div');
+      time.className = 'time';
+      time.textContent = `Started ${msToAgo(Number(info.start))}`;
+
+      body.appendChild(task);
+      body.appendChild(time);
+    }
+
+    card.appendChild(avatar);
+    card.appendChild(body);
+    board.appendChild(card);
+  }
+}
+
+async function tick() {
+  try {
+    const data = await fetchStatus();
+    render(data);
+  } catch (e) {
+    meta.textContent = `Error: ${e.message}`;
+  }
+}
+
+async function manualRefresh() {
+  refreshBtn.disabled = true;
+  try {
+    const res = await fetch('/api/refresh', { method: 'POST' });
+    if (res.status === 429) {
+      const data = await res.json();
+      quotaEl.textContent = `Rate limited. Try again in ${fmtMs(data.resetInMs)} (${data.remaining}/${data.maxPerHour} left)`;
+      return;
+    }
+    if (!res.ok) throw new Error('Refresh failed');
+    const data = await res.json();
+    await tick(); // update UI
+    if (data?.manual) {
+      quotaEl.textContent = `Manual refresh left: ${data.manual.remaining}/${data.manual.maxPerHour} • reset in ${fmtMs(data.manual.resetInMs)}`;
+    }
+  } catch (e) {
+    quotaEl.textContent = `Refresh error: ${e.message}`;
+  } finally {
+    refreshBtn.disabled = false;
+  }
+}
+
+refreshBtn.addEventListener('click', manualRefresh);
+
+await tick();
+setInterval(tick, intervalSeconds * 1000);
