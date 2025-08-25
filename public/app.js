@@ -75,9 +75,9 @@ function makeCard(member, isWorking, info) {
     const task = document.createElement('div');
     task.className = 'task';
 
-    if (info.taskId) {
+    if (info.taskUrl || info.taskId) {
       const a = document.createElement('a');
-      a.href = `https://app.clickup.com/t/${info.taskId}`;
+      a.href = info.taskUrl || `https://app.clickup.com/t/${info.taskId}`;
       a.target = '_blank';
       a.rel = 'noopener';
       a.textContent = info.taskName || 'Working…';
