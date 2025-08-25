@@ -2,25 +2,42 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
     <title>ClickUp Live Tracking</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <header>
+    <header class="topbar">
       <h1>ClickUp Live Tracking</h1>
-      <div id="meta"></div>
-      <button id="refreshBtn" class="refresh">Refresh now</button>
-      <small id="quota" class="quota"></small>
+      <div class="meta" id="meta"></div>
+      <div class="actions">
+        <button id="refreshBtn">Refresh now</button>
+        <span id="quota" class="muted"></span>
+      </div>
     </header>
 
-    <main>
-      <section id="board" class="board"></section>
-    </main>
+    <main class="wrapper">
+      <section>
+        <div class="section-title">
+          <h2>Working</h2>
+          <span class="count" id="count-working"></span>
+        </div>
+        <div id="board-working" class="board"></div>
+      </section>
 
-    <footer>
-      <small>Status updates every <span id="interval">15</span>s</small>
-    </footer>
+      <section>
+        <div class="section-title">
+          <h2>Not working</h2>
+          <span class="count" id="count-idle"></span>
+        </div>
+        <div id="board-idle" class="board"></div>
+      </section>
+
+      <p class="muted">Status updates every <span id="interval">15</span>s</p>
+    </main>
 
     <script src="/app.js"></script>
   </body>
