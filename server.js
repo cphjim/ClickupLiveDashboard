@@ -38,7 +38,19 @@ let cache = {
   workingByUserId: {}
 };
 
-// Manual refresh rate-limit
+// Wie ben ik (user id van het token)?
+let MY_USER_ID = null;
+async function fetchMe() {
+  try {
+    const { data } = await CU.get('/user');
+    // data.user.id of data.id (vorm kan verschillen)
+    MY_USER_ID = String(data?.user?.id ?? data?.id ?? '');
+  } catch (e) {
+    console.error('Failed to fetch /user', e?.response?.status || e?.message);
+  }
+}
+
+// manual refresh limiter
 let manualCalls = [];
 function pruneManualCalls() {
   const hourAgo = Date.now() - 60 * 60 * 1000;
@@ -55,19 +67,9 @@ function manualResetInMs() {
   return Math.max(0, (oldest + 60 * 60 * 1000) - Date.now());
 }
 
-// ---- FETCHERS ----
-
-// Haal team/workspace members op.
-// Ondersteunt beide vormen:
-//  A) GET /team/{id} -> { id, members: [...] }
-//  B) GET /team -> { teams: [ { members: [...] } ] }
+// MEMBERS (ondersteun alle bekende vormen)
 async function fetchMembers() {
   const { data } = await CU.get(`/team/${TEAM_ID}`);
-
-  // Ondersteun alle varianten die ClickUp kan teruggeven:
-  // A) { team: { members: [...] } }
-  // B) { members: [...] }
-  // C) { teams: [ { members: [...] } ] }
   const membersArray =
     (Array.isArray(data?.team?.members) && data.team.members) ||
     (Array.isArray(data?.members) && data.members) ||
@@ -80,46 +82,66 @@ async function fetchMembers() {
       id: String(u?.id),
       name: u?.username || u?.email || String(u?.id || 'Unknown'),
       email: u?.email || null,
-      avatar: u?.profilePicture || null,
+      avatar: u?.profilePicture || null
     };
   });
 }
 
-// Check één gebruiker: heeft die een lopende timer (duration < 0)?
+// actief = duration == null OF duration < 0 OF end/end_time == null
+function isActiveEntry(e) {
+  const dur = e?.duration;
+  const endA = e?.end;
+  const endB = e?.end_time;
+  return dur == null || (typeof dur === 'number' && dur < 0) || endA == null || endB == null;
+}
+
+// Eén user checken
 async function fetchActiveForUser(userId) {
   const now = Date.now();
-  const windowStart = now - 48 * 60 * 60 * 1000; // laatste 48u (ruim zat)
-  const url = `/team/${TEAM_ID}/time_entries?assignee=${userId}&start_date=${windowStart}&end_date=${now}`;
+  // Ruime window zodat huidige sessie er zéker in valt
+  const windowStart = now - 7 * 24 * 60 * 60 * 1000; // 7 dagen
+  const url = `/team/${TEAM_ID}/time_entries?assignee=${userId}&start_date=${windowStart}&end_date=${now}&include_task=true`;
   const { data } = await CU.get(url);
   const entries = data?.data || data?.time_entries || [];
 
-  // Actief = entry met negatieve duration
-  const active = entries.find(e => typeof e?.duration === 'number' && e.duration < 0);
+  // 1) Zoek actieve in de algemene lijst
+  let active = entries.find(isActiveEntry);
+
+  // 2) Speciaal: als dit MIJN user is, probeer ook het 'current' endpoint
+  if (!active && MY_USER_ID && String(userId) === String(MY_USER_ID)) {
+    try {
+      const r = await CU.get(`/team/${TEAM_ID}/time_entries/current`);
+      const cur = r?.data;
+      // Vorm varieert; accepteer objecten die duidelijk "running" zijn
+      const maybe = Array.isArray(cur) ? cur.find(isActiveEntry) : cur;
+      if (maybe && (isActiveEntry(maybe) || maybe?.start || maybe?.start_time)) {
+        active = maybe;
+      }
+    } catch (e) {
+      // niet fataal
+      console.warn('current endpoint failed', e?.response?.status || e?.message);
+    }
+  }
+
   if (!active) return null;
 
-  // Probeer taaknaam te pakken; val anders terug op omschrijving
   const taskName =
     active?.task?.name ||
     active?.task_name ||
     active?.description ||
     'Working…';
 
-  // Starttijd uit entry; als ontbreekt, gebruik nu
-  const start =
-    Number(active?.start ?? active?.start_time ?? Date.now());
-
   const taskId = active?.task?.id || active?.task_id || null;
+  const start = Number(active?.start ?? active?.start_time ?? Date.now());
 
   return { userId: String(userId), taskId, taskName, start };
 }
 
-// Haal voor ALLE members de status op (parallel, maar vriendelijk).
+// voor ALLE leden in parallel (beperkt)
 async function fetchRunningTimersForAll(members) {
-  // kleine concurrency-limit (5 tegelijk) zodat we niet spammen
   const results = [];
   const limit = 5;
   let i = 0;
-
   async function worker() {
     while (i < members.length) {
       const idx = i++;
@@ -128,21 +150,17 @@ async function fetchRunningTimersForAll(members) {
         const active = await fetchActiveForUser(userId);
         if (active) results.push(active);
       } catch (err) {
-        // stil falen per user; log op server
         console.error('time_entries error for', userId, err?.response?.status || err?.message);
       }
     }
   }
-
   const workers = Array.from({ length: Math.min(limit, members.length) }, () => worker());
   await Promise.all(workers);
-
-  return results; // array met actieve users
+  return results;
 }
 
-// Refresh cache (één “tick”)
+// refresh cache
 async function refreshCache() {
-  // MOCK mode zonder env
   if (!TOKEN || !TEAM_ID) {
     cache.members = [
       { id: '1', name: 'Alice' },
@@ -157,6 +175,9 @@ async function refreshCache() {
     return;
   }
 
+  // zorg dat MY_USER_ID bekend is
+  if (!MY_USER_ID) await fetchMe();
+
   const members = await fetchMembers();
   const running = await fetchRunningTimersForAll(members);
 
@@ -167,7 +188,7 @@ async function refreshCache() {
   cache = { lastUpdated: Date.now(), members, workingUserIds, workingByUserId };
 }
 
-// Backoff scheduler
+// scheduler met backoff
 let pollDelay = POLL_INTERVAL_MS;
 async function scheduledRefresh() {
   try {
@@ -227,22 +248,34 @@ app.post('/api/refresh', async (_req, res) => {
   }
 });
 
-// Frontend fallback
-app.get('*', (_req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// TEMP: raw ClickUp response om te zien wat we krijgen
-app.get('/api/debug-team', async (_req, res) => {
+// DEBUG: rå entries per user + current
+app.get('/api/debug-user', async (req, res) => {
+  const userId = req.query.userId;
+  if (!userId) return res.status(400).json({ error: 'userId query param required' });
   try {
-    const r = await CU.get(`/team/${TEAM_ID}`);
-    res.status(r.status).json(r.data);
+    const now = Date.now();
+    const windowStart = now - 7 * 24 * 60 * 60 * 1000;
+    const url = `/team/${TEAM_ID}/time_entries?assignee=${userId}&start_date=${windowStart}&end_date=${now}&include_task=true`;
+    const r = await CU.get(url);
+    let cur = null;
+    try {
+      const rc = await CU.get(`/team/${TEAM_ID}/time_entries/current`);
+      cur = rc.data;
+    } catch (e) {
+      cur = { error: e?.response?.status || e?.message };
+    }
+    res.json({ listStatus: r.status, list: r.data, me: MY_USER_ID, current: cur });
   } catch (err) {
     res.status(err?.response?.status || 500).json({
       error: err?.message,
       data: err?.response?.data
     });
   }
+});
+
+// Frontend fallback
+app.get('*', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Start
